@@ -32,15 +32,15 @@ import java.util.concurrent.Executor;
 
 public class Application extends android.app.Application {
     @SuppressWarnings("NullableProblems") private static WeakReference<Application> weakSelf;
+    private final Object haveBackendCallbacksLock = new Object();
     @SuppressWarnings("NullableProblems") private AsyncWorker asyncWorker;
+    @Nullable private Backend backend;
+    @SuppressWarnings("NullableProblems") private Handler handler;
+    @Nullable private Collection<BackendCallback> haveBackendCallbacks = new ArrayList<>();
     @SuppressWarnings("NullableProblems") private RootShell rootShell;
     @SuppressWarnings("NullableProblems") private SharedPreferences sharedPreferences;
     @SuppressWarnings("NullableProblems") private ToolsInstaller toolsInstaller;
     @SuppressWarnings("NullableProblems") private TunnelManager tunnelManager;
-    @SuppressWarnings("NullableProblems") private Handler handler;
-    @Nullable private Backend backend;
-    @Nullable private Collection<BackendCallback> haveBackendCallbacks = new ArrayList<>();
-    private final Object haveBackendCallbacksLock = new Object();
 
     public Application() {
         weakSelf = new WeakReference<>(this);
@@ -62,7 +62,8 @@ public class Application extends android.app.Application {
                     try {
                         app.rootShell.start();
                         app.backend = new WgQuickBackend(app.getApplicationContext());
-                    } catch (final Exception ignored) { }
+                    } catch (final Exception ignored) {
+                    }
                 }
                 if (app.backend == null)
                     app.backend = new GoBackend(app.getApplicationContext());
@@ -75,23 +76,6 @@ public class Application extends android.app.Application {
                 }
             }
             return app.backend;
-        }
-    }
-
-    @FunctionalInterface
-    public interface BackendCallback {
-        void callback(final Backend backend);
-    }
-
-    public static void onHaveBackend(final BackendCallback callback) {
-        final Application app = get();
-        synchronized (app.haveBackendCallbacksLock) {
-            if (app.haveBackendCallbacks == null) {
-                Objects.requireNonNull(app.backend, "Backend still null in onHaveBackend call");
-                callback.callback(app.backend);
-            } else {
-                app.haveBackendCallbacks.add(callback);
-            }
         }
     }
 
@@ -109,6 +93,18 @@ public class Application extends android.app.Application {
 
     public static TunnelManager getTunnelManager() {
         return get().tunnelManager;
+    }
+
+    public static void onHaveBackend(final BackendCallback callback) {
+        final Application app = get();
+        synchronized (app.haveBackendCallbacksLock) {
+            if (app.haveBackendCallbacks == null) {
+                Objects.requireNonNull(app.backend, "Backend still null in onHaveBackend call");
+                callback.callback(app.backend);
+            } else {
+                app.haveBackendCallbacks.add(callback);
+            }
+        }
     }
 
     @Override
@@ -131,5 +127,10 @@ public class Application extends android.app.Application {
         tunnelManager = new TunnelManager(configStore);
         asyncWorker.runAsync(Application::getBackend);
         tunnelManager.onCreate();
+    }
+
+    @FunctionalInterface
+    public interface BackendCallback {
+        void callback(final Backend backend);
     }
 }

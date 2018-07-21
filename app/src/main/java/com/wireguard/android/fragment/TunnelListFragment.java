@@ -6,7 +6,6 @@
 
 package com.wireguard.android.fragment;
 
-import android.animation.TimeInterpolator;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ContentResolver;
@@ -203,6 +202,14 @@ public class TunnelListFragment extends BaseFragment {
         super.onDestroyView();
     }
 
+    @Override
+    public void onPause() {
+        if (binding != null) {
+            binding.createMenu.collapse();
+        }
+        super.onPause();
+    }
+
     public void onRequestCreateConfig(@SuppressWarnings("unused") final View view) {
         startActivity(new Intent(getActivity(), TunnelCreatorActivity.class));
         if (binding != null)
@@ -216,14 +223,6 @@ public class TunnelListFragment extends BaseFragment {
         startActivityForResult(intent, REQUEST_IMPORT);
         if (binding != null)
             binding.createMenu.collapse();
-    }
-
-    @Override
-    public void onPause() {
-        if (binding != null) {
-            binding.createMenu.collapse();
-        }
-        super.onPause();
     }
 
     @Override
@@ -351,8 +350,10 @@ public class TunnelListFragment extends BaseFragment {
             binding.tunnelList.getAdapter().notifyDataSetChanged();
         }
 
-        void toggleItemChecked(final int position) {
-            setItemChecked(position, !checkedItems.contains(position));
+        @Override
+        public boolean onPrepareActionMode(final ActionMode mode, final Menu menu) {
+            updateTitle(mode);
+            return false;
         }
 
         void setItemChecked(final int position, final boolean checked) {
@@ -375,10 +376,8 @@ public class TunnelListFragment extends BaseFragment {
             updateTitle(actionMode);
         }
 
-        @Override
-        public boolean onPrepareActionMode(final ActionMode mode, final Menu menu) {
-            updateTitle(mode);
-            return false;
+        void toggleItemChecked(final int position) {
+            setItemChecked(position, !checkedItems.contains(position));
         }
 
         private void updateTitle(@Nullable final ActionMode mode) {

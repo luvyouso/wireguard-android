@@ -47,13 +47,23 @@ public final class TunnelManager extends BaseObservable {
     private static final String KEY_RUNNING_TUNNELS = "enabled_configs";
 
     private final ConfigStore configStore;
-    private final ObservableSortedKeyedList<String, Tunnel> tunnels = new ObservableSortedKeyedArrayList<>(COMPARATOR);
-    @Nullable private Tunnel lastUsedTunnel;
-    private boolean haveLoaded;
     private final ArrayList<CompletableFuture<Void>> delayedLoadRestoreTunnels = new ArrayList<>();
+    private final ObservableSortedKeyedList<String, Tunnel> tunnels = new ObservableSortedKeyedArrayList<>(COMPARATOR);
+    private boolean haveLoaded;
+    @Nullable private Tunnel lastUsedTunnel;
 
     public TunnelManager(final ConfigStore configStore) {
         this.configStore = configStore;
+    }
+
+    static CompletionStage<State> getTunnelState(final Tunnel tunnel) {
+        return Application.getAsyncWorker().supplyAsync(() -> Application.getBackend().getState(tunnel))
+                .thenApply(tunnel::onStateChanged);
+    }
+
+    static CompletionStage<Statistics> getTunnelStatistics(final Tunnel tunnel) {
+        return Application.getAsyncWorker().supplyAsync(() -> Application.getBackend().getStatistics(tunnel))
+                .thenApply(tunnel::onStatisticsChanged);
     }
 
     private Tunnel addToList(final String name, @Nullable final Config config, final State state) {
@@ -109,16 +119,6 @@ public final class TunnelManager extends BaseObservable {
     CompletionStage<Config> getTunnelConfig(final Tunnel tunnel) {
         return Application.getAsyncWorker().supplyAsync(() -> configStore.load(tunnel.getName()))
                 .thenApply(tunnel::onConfigChanged);
-    }
-
-    static CompletionStage<State> getTunnelState(final Tunnel tunnel) {
-        return Application.getAsyncWorker().supplyAsync(() -> Application.getBackend().getState(tunnel))
-                .thenApply(tunnel::onStateChanged);
-    }
-
-    static CompletionStage<Statistics> getTunnelStatistics(final Tunnel tunnel) {
-        return Application.getAsyncWorker().supplyAsync(() -> Application.getBackend().getStatistics(tunnel))
-                .thenApply(tunnel::onStatisticsChanged);
     }
 
     public ObservableKeyedList<String, Tunnel> getTunnels() {

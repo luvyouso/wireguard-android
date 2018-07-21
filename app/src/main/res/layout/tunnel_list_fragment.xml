@@ -30,12 +30,12 @@
             android:id="@+id/tunnel_list"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:paddingBottom="@{@dimen/design_fab_size_normal * 1.1f}"
-            android:clipToPadding="false"
             android:choiceMode="multipleChoiceModal"
+            android:clipToPadding="false"
+            android:paddingBottom="@{@dimen/design_fab_size_normal * 1.1f}"
+            app:configurationHandler="@{rowConfigurationHandler}"
             app:items="@{tunnels}"
-            app:layout="@{@layout/tunnel_list_item}"
-            app:configurationHandler="@{rowConfigurationHandler}" />
+            app:layout="@{@layout/tunnel_list_item}" />
 
         <com.wireguard.android.widget.fab.FloatingActionsMenu
             android:id="@+id/create_menu"
@@ -43,10 +43,10 @@
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|end"
             android:layout_margin="@dimen/fab_margin"
-            app:fab_labelStyle="@style/fab_label"
             android:clipChildren="false"
+            app:fab_labelStyle="@style/fab_label"
             app:fab_labelsPosition="left"
-            app:layout_behavior="com.wireguard.android.widget.fab.FloatingActionButtonBehavior" >
+            app:layout_behavior="com.wireguard.android.widget.fab.FloatingActionButtonBehavior">
 
             <com.wireguard.android.widget.fab.LabeledFloatingActionButton
                 android:id="@+id/create_empty"
@@ -54,17 +54,17 @@
                 android:layout_height="wrap_content"
                 android:onClick="@{fragment::onRequestCreateConfig}"
                 app:fabSize="mini"
-                app:srcCompat="@drawable/ic_action_edit_white"
-                app:fab_title="@string/create_empty" />
+                app:fab_title="@string/create_empty"
+                app:srcCompat="@drawable/ic_action_edit_white" />
 
             <com.wireguard.android.widget.fab.LabeledFloatingActionButton
                 android:id="@+id/create_from_file"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:onClick="@{fragment::onRequestImportConfig}"
-                app:srcCompat="@drawable/ic_action_open_white"
                 app:fabSize="mini"
-                app:fab_title="@string/create_from_file" />
+                app:fab_title="@string/create_from_file"
+                app:srcCompat="@drawable/ic_action_open_white" />
         </com.wireguard.android.widget.fab.FloatingActionsMenu>
     </android.support.design.widget.CoordinatorLayout>
 </layout>

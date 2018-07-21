@@ -34,9 +34,8 @@ import com.wireguard.android.util.ExceptionLoggers;
  */
 
 public abstract class BaseFragment extends Fragment implements OnSelectedTunnelChangedListener {
-    private static final String TAG = "WireGuard/" + BaseFragment.class.getSimpleName();
     private static final int REQUEST_CODE_VPN_PERMISSION = 23491;
-
+    private static final String TAG = "WireGuard/" + BaseFragment.class.getSimpleName();
     @Nullable private BaseActivity activity;
     @Nullable private Tunnel pendingTunnel;
     @Nullable private Boolean pendingTunnelUp;
@@ -44,6 +43,18 @@ public abstract class BaseFragment extends Fragment implements OnSelectedTunnelC
     @Nullable
     protected Tunnel getSelectedTunnel() {
         return activity != null ? activity.getSelectedTunnel() : null;
+    }
+
+    @Override
+    public void onActivityResult(final int requestCode, final int resultCode, @Nullable final Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == REQUEST_CODE_VPN_PERMISSION) {
+            if (pendingTunnel != null && pendingTunnelUp != null)
+                setTunnelStateWithPermissionsResult(pendingTunnel, pendingTunnelUp);
+            pendingTunnel = null;
+            pendingTunnelUp = null;
+        }
     }
 
     @Override
@@ -63,18 +74,6 @@ public abstract class BaseFragment extends Fragment implements OnSelectedTunnelC
             activity.removeOnSelectedTunnelChangedListener(this);
         activity = null;
         super.onDetach();
-    }
-
-    @Override
-    public void onActivityResult(final int requestCode, final int resultCode, @Nullable final Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-
-        if (requestCode == REQUEST_CODE_VPN_PERMISSION) {
-            if (pendingTunnel != null && pendingTunnelUp != null)
-                setTunnelStateWithPermissionsResult(pendingTunnel, pendingTunnelUp);
-            pendingTunnel = null;
-            pendingTunnelUp = null;
-        }
     }
 
     protected void setSelectedTunnel(@Nullable final Tunnel tunnel) {
