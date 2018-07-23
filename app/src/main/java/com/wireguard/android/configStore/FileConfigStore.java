@@ -70,7 +70,7 @@ public final class FileConfigStore implements ConfigStore {
     @Override
     public Config load(final String name) throws IOException {
         try (final FileInputStream stream = new FileInputStream(fileFor(name))) {
-            return Config.from(stream);
+            return Config.parse(stream);
         }
     }
 

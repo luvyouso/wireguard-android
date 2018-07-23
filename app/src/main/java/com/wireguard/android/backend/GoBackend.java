@@ -25,7 +25,6 @@ import com.wireguard.config.Config;
 import com.wireguard.config.InetNetwork;
 import com.wireguard.config.Interface;
 import com.wireguard.config.Peer;
-import com.wireguard.crypto.KeyEncoding;
 
 import java.net.InetAddress;
 import java.util.Collections;
@@ -147,26 +146,22 @@ public final class GoBackend implements Backend {
             }
 
             // Build config
-            final Interface iface = config.getInterface();
+            final Interface interfaze = config.getInterface();
             final String goConfig;
             try (final Formatter fmt = new Formatter(new StringBuilder())) {
                 fmt.format("replace_peers=true\n");
-                if (iface.getPrivateKey() != null)
-                    fmt.format("private_key=%s\n", KeyEncoding.keyToHex(KeyEncoding.keyFromBase64(iface.getPrivateKey())));
-                if (iface.getListenPort() != 0)
-                    fmt.format("listen_port=%d\n", config.getInterface().getListenPort());
+                fmt.format("private_key=%s\n", interfaze.getKeyPair().getPrivateKey().toHex());
+                interfaze.getListenPort().ifPresent(port -> fmt.format("listen_port=%d\n", port));
                 for (final Peer peer : config.getPeers()) {
-                    if (peer.getPublicKey() != null)
-                        fmt.format("public_key=%s\n", KeyEncoding.keyToHex(KeyEncoding.keyFromBase64(peer.getPublicKey())));
-                    if (peer.getPreSharedKey() != null)
-                        fmt.format("preshared_key=%s\n", KeyEncoding.keyToHex(KeyEncoding.keyFromBase64(peer.getPreSharedKey())));
-                    if (peer.getEndpoint() != null)
-                        fmt.format("endpoint=%s\n", peer.getResolvedEndpointString());
-                    if (peer.getPersistentKeepalive() != 0)
-                        fmt.format("persistent_keepalive_interval=%d\n", peer.getPersistentKeepalive());
-                    for (final InetNetwork addr : peer.getAllowedIPs()) {
-                        fmt.format("allowed_ip=%s\n", addr.toString());
-                    }
+                    fmt.format("public_key=%s\n", peer.getPublicKey().toHex());
+                    peer.getPreSharedKey()
+                            .ifPresent(key -> fmt.format("preshared_key=%s\n", key.toHex()));
+                    peer.getResolvedEndpointString()
+                            .ifPresent(endpoint -> fmt.format("endpoint=%s\n", endpoint));
+                    peer.getPersistentKeepalive()
+                            .ifPresent(pka -> fmt.format("persistent_keepalive_interval=%d\n", pka));
+                    for (final InetNetwork address : peer.getAllowedIps())
+                        fmt.format("allowed_ip=%s\n", address.toString());
                 }
                 goConfig = fmt.toString();
             }
@@ -185,18 +180,15 @@ public final class GoBackend implements Backend {
             for (final InetNetwork addr : config.getInterface().getAddresses())
                 builder.addAddress(addr.getAddress(), addr.getMask());
 
-            for (final InetAddress addr : config.getInterface().getDnses())
+            for (final InetAddress addr : config.getInterface().getDnsServers())
                 builder.addDnsServer(addr.getHostAddress());
 
             for (final Peer peer : config.getPeers()) {
-                for (final InetNetwork addr : peer.getAllowedIPs())
+                for (final InetNetwork addr : peer.getAllowedIps())
                     builder.addRoute(addr.getAddress(), addr.getMask());
             }
 
-            int mtu = config.getInterface().getMtu();
-            if (mtu == 0)
-                mtu = 1280;
-            builder.setMtu(mtu);
+            builder.setMtu(config.getInterface().getMtu().orElse(1280));
 
             builder.setBlocking(true);
             try (final ParcelFileDescriptor tun = builder.establish()) {

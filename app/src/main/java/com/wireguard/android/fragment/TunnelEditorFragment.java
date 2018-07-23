@@ -8,7 +8,6 @@ package com.wireguard.android.fragment;
 
 import android.app.Activity;
 import android.content.Context;
-import android.databinding.Observable;
 import android.databinding.ObservableList;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
@@ -25,19 +24,14 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.Toast;
 
 import com.wireguard.android.Application;
-import com.wireguard.android.BR;
 import com.wireguard.android.R;
 import com.wireguard.android.databinding.TunnelEditorFragmentBinding;
 import com.wireguard.android.fragment.AppListDialogFragment.AppExclusionListener;
 import com.wireguard.android.model.Tunnel;
 import com.wireguard.android.model.TunnelManager;
 import com.wireguard.android.util.ExceptionLoggers;
-import com.wireguard.config.Attribute;
+import com.wireguard.android.viewmodel.ConfigProxy;
 import com.wireguard.config.Config;
-import com.wireguard.config.Peer;
-
-import java.util.List;
-import java.util.Objects;
 
 /**
  * Fragment for editing a WireGuard configuration.
@@ -49,61 +43,7 @@ public class TunnelEditorFragment extends BaseFragment implements AppExclusionLi
     private static final String TAG = "WireGuard/" + TunnelEditorFragment.class.getSimpleName();
 
     @Nullable private TunnelEditorFragmentBinding binding;
-    private final Observable.OnPropertyChangedCallback breakObjectOrientedLayeringHandler = new Observable.OnPropertyChangedCallback() {
-        @Override
-        public void onPropertyChanged(final Observable sender, final int propertyId) {
-            if (binding == null)
-                return;
-            final Config.Observable config = binding.getConfig();
-            if (config == null)
-                return;
-            if (propertyId == BR.config) {
-                config.addOnPropertyChangedCallback(breakObjectOrientedLayeringHandler);
-                config.getInterfaceSection().addOnPropertyChangedCallback(breakObjectOrientedLayeringHandler);
-                config.getPeers().addOnListChangedCallback(breakObjectListOrientedLayeringHandler);
-            } else if (propertyId == BR.dnses || propertyId == BR.peers)
-                ;
-            else
-                return;
-            final int numSiblings = config.getPeers().size() - 1;
-            for (final Peer.Observable peer : config.getPeers()) {
-                peer.setInterfaceDNSRoutes(config.getInterfaceSection().getDnses());
-                peer.setNumSiblings(numSiblings);
-            }
-        }
-    };
-    private final ObservableList.OnListChangedCallback<? extends ObservableList<Peer.Observable>> breakObjectListOrientedLayeringHandler = new ObservableList.OnListChangedCallback<ObservableList<Peer.Observable>>() {
-        @Override
-        public void onChanged(final ObservableList<Peer.Observable> sender) {
-        }
-
-        @Override
-        public void onItemRangeChanged(final ObservableList<Peer.Observable> sender, final int positionStart, final int itemCount) {
-        }
-
-        @Override
-        public void onItemRangeInserted(final ObservableList<Peer.Observable> sender, final int positionStart, final int itemCount) {
-            if (binding != null)
-                breakObjectOrientedLayeringHandler.onPropertyChanged(binding.getConfig(), BR.peers);
-        }
-
-        @Override
-        public void onItemRangeMoved(final ObservableList<Peer.Observable> sender, final int fromPosition, final int toPosition, final int itemCount) {
-        }
-
-        @Override
-        public void onItemRangeRemoved(final ObservableList<Peer.Observable> sender, final int positionStart, final int itemCount) {
-            if (binding != null)
-                breakObjectOrientedLayeringHandler.onPropertyChanged(binding.getConfig(), BR.peers);
-        }
-    };
     @Nullable private Tunnel tunnel;
-
-    private void onConfigLoaded(final String name, final Config config) {
-        if (binding != null) {
-            binding.setConfig(new Config.Observable(config, name));
-        }
-    }
 
     private void onConfigSaved(final Tunnel savedTunnel,
                                @Nullable final Throwable throwable) {
@@ -139,7 +79,6 @@ public class TunnelEditorFragment extends BaseFragment implements AppExclusionLi
                              @Nullable final Bundle savedInstanceState) {
         super.onCreateView(inflater, container, savedInstanceState);
         binding = TunnelEditorFragmentBinding.inflate(inflater, container, false);
-        binding.addOnPropertyChangedCallback(breakObjectOrientedLayeringHandler);
         binding.executePendingBindings();
         return binding.getRoot();
     }
@@ -148,12 +87,6 @@ public class TunnelEditorFragment extends BaseFragment implements AppExclusionLi
     public void onDestroyView() {
         binding = null;
         super.onDestroyView();
-    }
-
-    @Override
-    public void onExcludedAppsSelected(final List<String> excludedApps) {
-        Objects.requireNonNull(binding, "Tried to set excluded apps while no view was loaded");
-        binding.getConfig().getInterfaceSection().setExcludedApplications(Attribute.iterableToString(excludedApps));
     }
 
     private void onFinished() {
@@ -182,25 +115,25 @@ public class TunnelEditorFragment extends BaseFragment implements AppExclusionLi
     public boolean onOptionsItemSelected(final MenuItem item) {
         switch (item.getItemId()) {
             case R.id.menu_action_save:
-                final Config newConfig = new Config();
+                final Config newConfig;
                 try {
-                    binding.getConfig().commitData(newConfig);
+                    newConfig = binding.getConfig().resolve();
                 } catch (final Exception e) {
                     final String error = ExceptionLoggers.unwrapMessage(e);
-                    final String tunnelName = tunnel == null ? binding.getConfig().getName() : tunnel.getName();
+                    final String tunnelName = tunnel == null ? binding.getName() : tunnel.getName();
                     final String message = getString(R.string.config_save_error, tunnelName, error);
                     Log.e(TAG, message, e);
                     Snackbar.make(binding.mainContainer, error, Snackbar.LENGTH_LONG).show();
                     return false;
                 }
                 if (tunnel == null) {
-                    Log.d(TAG, "Attempting to create new tunnel " + binding.getConfig().getName());
+                    Log.d(TAG, "Attempting to create new tunnel " + binding.getName());
                     final TunnelManager manager = Application.getTunnelManager();
-                    manager.create(binding.getConfig().getName(), newConfig)
+                    manager.create(binding.getName(), newConfig)
                             .whenComplete(this::onTunnelCreated);
-                } else if (!tunnel.getName().equals(binding.getConfig().getName())) {
-                    Log.d(TAG, "Attempting to rename tunnel to " + binding.getConfig().getName());
-                    tunnel.setName(binding.getConfig().getName())
+                } else if (!tunnel.getName().equals(binding.getName())) {
+                    Log.d(TAG, "Attempting to rename tunnel to " + binding.getName());
+                    tunnel.setName(binding.getName())
                             .whenComplete((a, b) -> onTunnelRenamed(tunnel, newConfig, b));
                 } else {
                     Log.d(TAG, "Attempting to save config of " + tunnel.getName());
@@ -213,18 +146,20 @@ public class TunnelEditorFragment extends BaseFragment implements AppExclusionLi
         }
     }
 
+    @Override public ObservableList<String> onRequestExcludedApplications() {
+        return binding.getConfig().getInterface().getExcludedApplications();
+    }
+
     public void onRequestSetExcludedApplications(@SuppressWarnings("unused") final View view) {
         final FragmentManager fragmentManager = getFragmentManager();
         if (fragmentManager != null && binding != null) {
-            final String[] excludedApps = Attribute.stringToList(binding.getConfig().getInterfaceSection().getExcludedApplications());
-            final AppListDialogFragment fragment = AppListDialogFragment.newInstance(excludedApps, this);
+            final AppListDialogFragment fragment = AppListDialogFragment.newInstance(this);
             fragment.show(fragmentManager, null);
         }
     }
 
     @Override
     public void onSaveInstanceState(final Bundle outState) {
-        outState.putParcelable(KEY_LOCAL_CONFIG, binding.getConfig());
         outState.putString(KEY_ORIGINAL_NAME, tunnel == null ? null : tunnel.getName());
         super.onSaveInstanceState(outState);
     }
@@ -234,9 +169,9 @@ public class TunnelEditorFragment extends BaseFragment implements AppExclusionLi
         tunnel = newTunnel;
         if (binding == null)
             return;
-        binding.setConfig(new Config.Observable(null, null));
+        binding.setConfig(new ConfigProxy());
         if (tunnel != null)
-            tunnel.getConfigAsync().thenAccept(a -> onConfigLoaded(tunnel.getName(), a));
+            tunnel.getConfigAsync().thenAccept(config -> binding.setConfig(new ConfigProxy(config)));
     }
 
     private void onTunnelCreated(final Tunnel newTunnel, @Nullable final Throwable throwable) {
@@ -288,12 +223,12 @@ public class TunnelEditorFragment extends BaseFragment implements AppExclusionLi
             onSelectedTunnelChanged(null, getSelectedTunnel());
         } else {
             tunnel = getSelectedTunnel();
-            final Config.Observable config = savedInstanceState.getParcelable(KEY_LOCAL_CONFIG);
+            final Config config = savedInstanceState.getParcelable(KEY_LOCAL_CONFIG);
             final String originalName = savedInstanceState.getString(KEY_ORIGINAL_NAME);
             if (tunnel != null && !tunnel.getName().equals(originalName))
                 onSelectedTunnelChanged(null, tunnel);
             else
-                binding.setConfig(config);
+                binding.setConfig(new ConfigProxy(config));
         }
 
         super.onViewStateRestored(savedInstanceState);

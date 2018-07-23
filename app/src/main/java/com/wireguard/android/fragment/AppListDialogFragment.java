@@ -8,10 +8,11 @@ package com.wireguard.android.fragment;
 
 import android.app.Activity;
 import android.app.Dialog;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.databinding.ObservableArrayList;
+import android.databinding.ObservableList;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
 import android.support.v4.app.DialogFragment;
@@ -28,22 +29,21 @@ import com.wireguard.android.util.ObservableKeyedArrayList;
 import com.wireguard.android.util.ObservableKeyedList;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import java9.util.Comparators;
+
 public class AppListDialogFragment extends DialogFragment {
+    private final ObservableKeyedList<String, ApplicationData> appData =
+            new ObservableKeyedArrayList<>();
+    @Nullable
+    private ObservableList<String> excludedApplications;
 
-    private static final String KEY_EXCLUDED_APPS = "excludedApps";
-    private final ObservableKeyedList<String, ApplicationData> appData = new ObservableKeyedArrayList<>();
-    private List<String> currentlyExcludedApps;
-
-    public static <T extends Fragment & AppExclusionListener> AppListDialogFragment newInstance(final String[] excludedApps, final T target) {
-        final Bundle extras = new Bundle();
-        extras.putStringArray(KEY_EXCLUDED_APPS, excludedApps);
+    public static <T extends Fragment & AppExclusionListener>
+    AppListDialogFragment newInstance(final T target) {
         final AppListDialogFragment fragment = new AppListDialogFragment();
         fragment.setTargetFragment(target, 0);
-        fragment.setArguments(extras);
         return fragment;
     }
 
@@ -62,10 +62,12 @@ public class AppListDialogFragment extends DialogFragment {
             final List<ApplicationData> appData = new ArrayList<>();
             for (ResolveInfo resolveInfo : resolveInfos) {
                 String packageName = resolveInfo.activityInfo.packageName;
-                appData.add(new ApplicationData(resolveInfo.loadIcon(pm), resolveInfo.loadLabel(pm).toString(), packageName, currentlyExcludedApps.contains(packageName)));
+                appData.add(new ApplicationData(resolveInfo.loadIcon(pm),
+                        resolveInfo.loadLabel(pm).toString(), packageName,
+                        excludedApplications.contains(packageName)));
             }
 
-            Collections.sort(appData, (lhs, rhs) -> lhs.getName().toLowerCase().compareTo(rhs.getName().toLowerCase()));
+            Collections.sort(appData, Comparators.comparing(ApplicationData::getName, String.CASE_INSENSITIVE_ORDER));
             return appData;
         }).whenComplete(((data, throwable) -> {
             if (data != null) {
@@ -83,8 +85,10 @@ public class AppListDialogFragment extends DialogFragment {
     @Override
     public void onCreate(@Nullable final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        currentlyExcludedApps = Arrays.asList(getArguments().getStringArray(KEY_EXCLUDED_APPS));
+        if (getTargetFragment() instanceof AppExclusionListener)
+            excludedApplications = ((AppExclusionListener) getTargetFragment()).onRequestExcludedApplications();
+        else
+            excludedApplications = new ObservableArrayList<>();
     }
 
     @Override
@@ -92,13 +96,16 @@ public class AppListDialogFragment extends DialogFragment {
         final AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(getActivity());
         alertDialogBuilder.setTitle(R.string.excluded_applications);
 
-        final AppListDialogFragmentBinding binding = AppListDialogFragmentBinding.inflate(getActivity().getLayoutInflater(), null, false);
+        final AppListDialogFragmentBinding binding =
+                AppListDialogFragmentBinding.inflate(getActivity().getLayoutInflater(), null, false);
         binding.executePendingBindings();
         alertDialogBuilder.setView(binding.getRoot());
 
         alertDialogBuilder.setPositiveButton(R.string.set_exclusions, (dialog, which) -> setExclusionsAndDismiss());
         alertDialogBuilder.setNegativeButton(R.string.cancel, (dialog, which) -> dialog.dismiss());
         alertDialogBuilder.setNeutralButton(R.string.deselect_all, (dialog, which) -> {
+            for (final ApplicationData app : appData)
+                app.setExcludedFromTunnel(false);
         });
 
         binding.setFragment(this);
@@ -106,28 +113,21 @@ public class AppListDialogFragment extends DialogFragment {
 
         loadData();
 
-        final AlertDialog dialog = alertDialogBuilder.create();
-        dialog.setOnShowListener(d -> dialog.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener(view -> {
-            for (final ApplicationData app : appData)
-                app.setExcludedFromTunnel(false);
-        }));
-        return dialog;
+        return alertDialogBuilder.create();
     }
 
     void setExclusionsAndDismiss() {
         final List<String> excludedApps = new ArrayList<>();
         for (final ApplicationData data : appData) {
-            if (data.isExcludedFromTunnel()) {
+            if (data.isExcludedFromTunnel() && !excludedApps.contains(data.getPackageName())) {
                 excludedApps.add(data.getPackageName());
             }
         }
-
-        ((AppExclusionListener) getTargetFragment()).onExcludedAppsSelected(excludedApps);
         dismiss();
     }
 
     public interface AppExclusionListener {
-        void onExcludedAppsSelected(List<String> excludedApps);
+        ObservableList<String> onRequestExcludedApplications();
     }
 
 }

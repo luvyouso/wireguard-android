@@ -1,28 +1,37 @@
 /*
  * Copyright © 2015-2018 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
+ * Copyright © 2018 Samuel Holland <samuel@sholland.org>
  * SPDX-License-Identifier: Apache-2.0
  */
 
 package com.wireguard.crypto;
 
+import java.util.Arrays;
+
 /**
- * This is a specialized constant-time base64 and hex implementation that resists side-channel attacks.
+ * Represents a WireGuard public or private key. This class uses specialized constant-time base64
+ * and hexadecimal codec implementations that resist side-channel attacks.
+ * <p>
+ * Instances of this class are immutable.
  */
 
 @SuppressWarnings("MagicNumber")
-public final class KeyEncoding {
-    public static final int KEY_LENGTH = 32;
+public final class Key {
     public static final int KEY_LENGTH_BASE64 = 44;
+    public static final int KEY_LENGTH_BYTES = 32;
     public static final int KEY_LENGTH_HEX = 64;
     private static final String KEY_LENGTH_BASE64_EXCEPTION_MESSAGE =
             "WireGuard base64 keys must be 44 characters encoding 32 bytes";
-    private static final String KEY_LENGTH_EXCEPTION_MESSAGE =
+    private static final String KEY_LENGTH_BYTES_EXCEPTION_MESSAGE =
             "WireGuard keys must be 32 bytes";
     private static final String KEY_LENGTH_HEX_EXCEPTION_MESSAGE =
             "WireGuard hex keys must be 64 characters encoding 32 bytes";
 
-    private KeyEncoding() {
-        // Prevent instantiation.
+    private final byte key[];
+
+    private Key(final byte key[]) {
+        /* Defensively copy to ensure immutability. */
+        this.key = Arrays.copyOf(key, KEY_LENGTH_BYTES);
     }
 
     private static int decodeBase64(final char[] src, final int srcOffset) {
@@ -57,14 +66,14 @@ public final class KeyEncoding {
         }
     }
 
-    public static byte[] keyFromBase64(final String str) {
+    public static Key fromBase64(final String str) {
         final char[] input = str.toCharArray();
-        final byte[] key = new byte[KEY_LENGTH];
         if (input.length != KEY_LENGTH_BASE64 || input[KEY_LENGTH_BASE64 - 1] != '=')
             throw new IllegalArgumentException(KEY_LENGTH_BASE64_EXCEPTION_MESSAGE);
+        final byte[] key = new byte[KEY_LENGTH_BYTES];
         int i;
         int ret = 0;
-        for (i = 0; i < KEY_LENGTH / 3; ++i) {
+        for (i = 0; i < KEY_LENGTH_BYTES / 3; ++i) {
             final int val = decodeBase64(input, i * 4);
             ret |= val >>> 31;
             key[i * 3] = (byte) ((val >>> 16) & 0xff);
@@ -84,16 +93,21 @@ public final class KeyEncoding {
 
         if (ret != 0)
             throw new IllegalArgumentException(KEY_LENGTH_BASE64_EXCEPTION_MESSAGE);
-        return key;
+        return new Key(key);
     }
 
-    public static byte[] keyFromHex(final String str) {
+    public static Key fromBytes(final byte[] bytes) {
+        if (bytes.length != KEY_LENGTH_BYTES)
+            throw new IllegalArgumentException(KEY_LENGTH_BYTES_EXCEPTION_MESSAGE);
+        return new Key(bytes);
+    }
+
+    public static Key fromHex(final String str) {
         final char[] input = str.toCharArray();
-        final byte[] key = new byte[KEY_LENGTH];
         if (input.length != KEY_LENGTH_HEX)
             throw new IllegalArgumentException(KEY_LENGTH_HEX_EXCEPTION_MESSAGE);
+        final byte[] key = new byte[KEY_LENGTH_BYTES];
         int ret = 0;
-
         for (int i = 0; i < KEY_LENGTH_HEX; i += 2) {
             int c;
             int cNum;
@@ -123,15 +137,18 @@ public final class KeyEncoding {
         }
         if (ret != 0)
             throw new IllegalArgumentException(KEY_LENGTH_HEX_EXCEPTION_MESSAGE);
-        return key;
+        return new Key(key);
     }
 
-    public static String keyToBase64(final byte[] key) {
+    public byte[] getBytes() {
+        /* Defensively copy to ensure immutability. */
+        return Arrays.copyOf(key, KEY_LENGTH_BYTES);
+    }
+
+    public String toBase64() {
         final char[] output = new char[KEY_LENGTH_BASE64];
-        if (key.length != KEY_LENGTH)
-            throw new IllegalArgumentException(KEY_LENGTH_EXCEPTION_MESSAGE);
         int i;
-        for (i = 0; i < KEY_LENGTH / 3; ++i)
+        for (i = 0; i < KEY_LENGTH_BYTES / 3; ++i)
             encodeBase64(key, i * 3, output, i * 4);
         final byte[] endSegment = {
                 key[i * 3],
@@ -143,11 +160,9 @@ public final class KeyEncoding {
         return new String(output);
     }
 
-    public static String keyToHex(final byte[] key) {
+    public String toHex() {
         final char[] output = new char[KEY_LENGTH_HEX];
-        if (key.length != KEY_LENGTH)
-            throw new IllegalArgumentException(KEY_LENGTH_EXCEPTION_MESSAGE);
-        for (int i = 0; i < KEY_LENGTH; ++i) {
+        for (int i = 0; i < KEY_LENGTH_BYTES; ++i) {
             output[i * 2] = (char) (87 + (key[i] >> 4 & 0xf)
                     + ((((key[i] >> 4 & 0xf) - 10) >> 8) & ~38));
             output[i * 2 + 1] = (char) (87 + (key[i] & 0xf)

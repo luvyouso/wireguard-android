@@ -38,9 +38,6 @@ import com.wireguard.android.util.ExceptionLoggers;
 import com.wireguard.android.widget.fab.FloatingActionsMenuRecyclerViewScrollListener;
 import com.wireguard.config.Config;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -104,7 +101,6 @@ public class TunnelListFragment extends BaseFragment {
 
             if (isZip) {
                 try (ZipInputStream zip = new ZipInputStream(contentResolver.openInputStream(uri))) {
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(zip, StandardCharsets.UTF_8));
                     ZipEntry entry;
                     while ((entry = zip.getNextEntry()) != null) {
                         if (entry.isDirectory())
@@ -122,7 +118,7 @@ public class TunnelListFragment extends BaseFragment {
                             continue;
                         Config config = null;
                         try {
-                            config = Config.from(reader);
+                            config = Config.parse(zip);
                         } catch (Exception e) {
                             throwables.add(e);
                         }
@@ -132,7 +128,7 @@ public class TunnelListFragment extends BaseFragment {
                 }
             } else {
                 futureTunnels.add(Application.getTunnelManager().create(name,
-                        Config.from(contentResolver.openInputStream(uri))).toCompletableFuture());
+                        Config.parse(contentResolver.openInputStream(uri))).toCompletableFuture());
             }
 
             if (futureTunnels.isEmpty()) {

@@ -7,20 +7,26 @@
 package com.wireguard.android.databinding;
 
 import android.databinding.BindingAdapter;
+import android.databinding.DataBindingUtil;
 import android.databinding.ObservableList;
+import android.databinding.ViewDataBinding;
 import android.databinding.adapters.ListenerUtil;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.text.InputFilter;
+import android.view.LayoutInflater;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.wireguard.android.BR;
 import com.wireguard.android.R;
 import com.wireguard.android.databinding.ObservableKeyedRecyclerViewAdapter.RowConfigurationHandler;
 import com.wireguard.android.util.ObservableKeyedList;
 import com.wireguard.android.widget.ToggleSwitch;
 import com.wireguard.android.widget.ToggleSwitch.OnBeforeCheckedChangeListener;
 import com.wireguard.util.Keyed;
+
+import java9.util.Optional;
 
 /**
  * Static methods for use by generated code in the Android data binding library.
@@ -67,6 +73,24 @@ public final class BindingAdapters {
         listener.setList(newList);
     }
 
+    @BindingAdapter({"items", "layout"})
+    public static <E> void setItems(final LinearLayout view,
+                                    final Iterable<E> oldList, final int oldLayoutId,
+                                    final Iterable<E> newList, final int newLayoutId) {
+        if (oldList == newList && oldLayoutId == newLayoutId)
+            return;
+        final LayoutInflater layoutInflater = LayoutInflater.from(view.getContext());
+        view.removeAllViews();
+        for (final E item : newList) {
+            final ViewDataBinding binding =
+                    DataBindingUtil.inflate(layoutInflater, newLayoutId, view, false);
+            binding.setVariable(BR.collection, newList);
+            binding.setVariable(BR.item, item);
+            binding.executePendingBindings();
+            view.addView(binding.getRoot());
+        }
+    }
+
     @BindingAdapter(requireAll = false, value = {"items", "layout", "configurationHandler"})
     public static <K, E extends Keyed<? extends K>>
     void setItems(final RecyclerView view,
@@ -104,4 +128,8 @@ public final class BindingAdapters {
         view.setOnBeforeCheckedChangeListener(listener);
     }
 
+    @BindingAdapter("android:text")
+    public static <T> void setText(final TextView view, final Optional<T> text) {
+        view.setText(text.map(T::toString).orElse(""));
+    }
 }

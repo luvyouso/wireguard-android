@@ -6,379 +6,232 @@
 
 package com.wireguard.config;
 
-import android.databinding.BaseObservable;
-import android.databinding.Bindable;
-import android.os.Parcel;
-import android.os.Parcelable;
 import android.support.annotation.Nullable;
+import android.support.v4.util.ArraySet;
+import android.text.TextUtils;
 
-import com.android.databinding.library.baseAdapters.BR;
-import com.wireguard.crypto.KeyEncoding;
+import com.wireguard.crypto.Key;
 
 import java.net.Inet6Address;
 import java.net.InetSocketAddress;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashSet;
+import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
+import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Matcher;
 
-import java9.lang.Iterables;
+import java9.util.Optional;
+import java9.util.stream.Collectors;
+import java9.util.stream.Stream;
 
 /**
- * Represents the configuration for a WireGuard peer (a [Peer] block).
+ * Represents the configuration for a WireGuard peer (a [Peer] block). Peers must have a public key,
+ * and may optionally have several other attributes.
+ * <p>
+ * Instances of this class are immutable.
  */
 
-public class Peer {
-    private final List<InetNetwork> allowedIPsList;
-    @Nullable private InetSocketAddress endpoint;
-    private int persistentKeepalive;
-    @Nullable private String preSharedKey;
-    @Nullable private String publicKey;
+public final class Peer {
+    private final Set<InetNetwork> allowedIps;
+    private final Optional<InetSocketAddress> endpoint;
+    private final Optional<Integer> persistentKeepalive;
+    private final Optional<Key> preSharedKey;
+    private final Key publicKey;
 
-    public Peer() {
-        allowedIPsList = new ArrayList<>();
+    private Peer(final Builder builder) {
+        // Defensively copy to ensure immutability even if the Builder is reused.
+        allowedIps = Collections.unmodifiableSet(new ArraySet<>(builder.allowedIps));
+        endpoint = builder.endpoint;
+        persistentKeepalive = builder.persistentKeepalive;
+        preSharedKey = builder.preSharedKey;
+        publicKey = Objects.requireNonNull(builder.publicKey, "Peers must have a public key");
     }
 
-    private void addAllowedIPs(@Nullable final String[] allowedIPs) {
-        if (allowedIPs != null && allowedIPs.length > 0) {
-            for (final String allowedIP : allowedIPs) {
-                allowedIPsList.add(new InetNetwork(allowedIP));
+    /**
+     * Parses an series of "KEY = VALUE" lines into a {@code Peer}.
+     *
+     * @param lines An iterable sequence of lines, containing at least a public key attribute
+     * @return A {@code Peer} with all of the attributes from {@code lines} set
+     */
+    public static Peer parse(final Iterable<? extends CharSequence> lines) {
+        final Builder builder = new Builder();
+        for (final CharSequence line : lines) {
+            final Matcher matcher = Config.LINE_PARSER.matcher(line);
+            if (!matcher.matches())
+                throw new IllegalArgumentException("Bad configuration format in [Peer]");
+            final String key = matcher.group(1);
+            final String value = matcher.group(2);
+            switch (key.toLowerCase()) {
+                case "allowedips":
+                    builder.parseAllowedIPs(value);
+                    break;
+                case "endpoint":
+                    builder.parseEndpoint(value);
+                    break;
+                case "persistentkeepalive":
+                    builder.parsePersistentKeepalive(value);
+                    break;
+                case "presharedkey":
+                    builder.parsePreSharedKey(value);
+                    break;
+                case "publickey":
+                    builder.parsePublicKey(value);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unknown [Peer] attribute: " + key);
             }
         }
+        return builder.build();
     }
 
-    public InetNetwork[] getAllowedIPs() {
-        return allowedIPsList.toArray(new InetNetwork[allowedIPsList.size()]);
+    public Set<InetNetwork> getAllowedIps() {
+        // The collection is already immutable.
+        return allowedIps;
     }
 
-    @Nullable
-    private String getAllowedIPsString() {
-        if (allowedIPsList.isEmpty())
-            return null;
-        return Attribute.iterableToString(allowedIPsList);
-    }
-
-    @Nullable
-    public InetSocketAddress getEndpoint() {
+    public Optional<InetSocketAddress> getEndpoint() {
         return endpoint;
     }
 
-    @Nullable
-    private String getEndpointString() {
-        if (endpoint == null)
-            return null;
-        return String.format(Locale.getDefault(), "%s:%d", endpoint.getHostString(), endpoint.getPort());
-    }
-
-    public int getPersistentKeepalive() {
+    public Optional<Integer> getPersistentKeepalive() {
         return persistentKeepalive;
     }
 
-    @Nullable
-    private String getPersistentKeepaliveString() {
-        if (persistentKeepalive == 0)
-            return null;
-        return Integer.valueOf(persistentKeepalive).toString();
-    }
-
-    @Nullable
-    public String getPreSharedKey() {
+    public Optional<Key> getPreSharedKey() {
         return preSharedKey;
     }
 
-    @Nullable
-    public String getPublicKey() {
+    public Key getPublicKey() {
         return publicKey;
     }
 
-    public String getResolvedEndpointString() throws UnknownHostException {
-        if (endpoint == null)
-            throw new UnknownHostException("{empty}");
-        if (endpoint.isUnresolved())
-            endpoint = new InetSocketAddress(endpoint.getHostString(), endpoint.getPort());
-        if (endpoint.isUnresolved())
-            throw new UnknownHostException(endpoint.getHostString());
-        if (endpoint.getAddress() instanceof Inet6Address)
-            return String.format(Locale.getDefault(),
-                    "[%s]:%d",
-                    endpoint.getAddress().getHostAddress(),
-                    endpoint.getPort());
-        return String.format(Locale.getDefault(),
-                "%s:%d",
-                endpoint.getAddress().getHostAddress(),
-                endpoint.getPort());
+    public Optional<String> getResolvedEndpointString() {
+        if (!endpoint.isPresent())
+            return Optional.empty();
+        InetSocketAddress ep = endpoint.get();
+        if (ep.isUnresolved())
+            ep = new InetSocketAddress(ep.getHostString(), ep.getPort());
+        if (ep.isUnresolved())
+            return Optional.empty();
+        final String fmt = ep.getAddress() instanceof Inet6Address ? "[%s]:%d" : "%s:%d";
+        return Optional.of(String.format(fmt, ep.getAddress().getHostAddress(), ep.getPort()));
     }
 
-    public void parse(final String line) {
-        final Attribute key = Attribute.match(line);
-        switch (key) {
-            case ALLOWED_IPS:
-                addAllowedIPs(key.parseList(line));
-                break;
-            case ENDPOINT:
-                setEndpointString(key.parse(line));
-                break;
-            case PERSISTENT_KEEPALIVE:
-                setPersistentKeepaliveString(key.parse(line));
-                break;
-            case PRESHARED_KEY:
-                setPreSharedKey(key.parse(line));
-                break;
-            case PUBLIC_KEY:
-                setPublicKey(key.parse(line));
-                break;
-            default:
-                throw new IllegalArgumentException(line);
-        }
-    }
-
-    private void setAllowedIPsString(@Nullable final String allowedIPsString) {
-        allowedIPsList.clear();
-        addAllowedIPs(Attribute.stringToList(allowedIPsString));
-    }
-
-    private void setEndpoint(@Nullable final InetSocketAddress endpoint) {
-        this.endpoint = endpoint;
-    }
-
-    private void setEndpointString(@Nullable final String endpoint) {
-        if (endpoint != null && !endpoint.isEmpty()) {
-            final InetSocketAddress constructedEndpoint;
-            if (endpoint.indexOf('/') != -1 || endpoint.indexOf('?') != -1 || endpoint.indexOf('#') != -1)
-                throw new IllegalArgumentException("Forbidden characters in endpoint");
-            final URI uri;
-            try {
-                uri = new URI("wg://" + endpoint);
-            } catch (final URISyntaxException e) {
-                throw new IllegalArgumentException(e);
-            }
-            constructedEndpoint = InetSocketAddress.createUnresolved(uri.getHost(), uri.getPort());
-            setEndpoint(constructedEndpoint);
-        } else
-            setEndpoint(null);
-    }
-
-    private void setPersistentKeepalive(final int persistentKeepalive) {
-        this.persistentKeepalive = persistentKeepalive;
-    }
-
-    private void setPersistentKeepaliveString(@Nullable final String persistentKeepalive) {
-        if (persistentKeepalive != null && !persistentKeepalive.isEmpty())
-            setPersistentKeepalive(Integer.parseInt(persistentKeepalive, 10));
-        else
-            setPersistentKeepalive(0);
-    }
-
-    private void setPreSharedKey(@Nullable String preSharedKey) {
-        if (preSharedKey != null && preSharedKey.isEmpty())
-            preSharedKey = null;
-        if (preSharedKey != null)
-            KeyEncoding.keyFromBase64(preSharedKey);
-        this.preSharedKey = preSharedKey;
-    }
-
-    private void setPublicKey(@Nullable String publicKey) {
-        if (publicKey != null && publicKey.isEmpty())
-            publicKey = null;
-        if (publicKey != null)
-            KeyEncoding.keyFromBase64(publicKey);
-        this.publicKey = publicKey;
-    }
-
+    /**
+     * Converts the {@code Peer} into a string suitable for debugging purposes. The {@code Peer} is
+     * identified by its public key and (if known) its endpoint.
+     *
+     * @return A concise single-line identifier for the {@code Peer}
+     */
     @Override
     public String toString() {
-        final StringBuilder sb = new StringBuilder().append("[Peer]\n");
-        if (!allowedIPsList.isEmpty())
-            sb.append(Attribute.ALLOWED_IPS.composeWith(allowedIPsList));
-        if (endpoint != null)
-            sb.append(Attribute.ENDPOINT.composeWith(getEndpointString()));
-        if (persistentKeepalive != 0)
-            sb.append(Attribute.PERSISTENT_KEEPALIVE.composeWith(persistentKeepalive));
-        if (preSharedKey != null)
-            sb.append(Attribute.PRESHARED_KEY.composeWith(preSharedKey));
-        if (publicKey != null)
-            sb.append(Attribute.PUBLIC_KEY.composeWith(publicKey));
+        final StringBuilder sb = new StringBuilder("(Peer ");
+        sb.append(publicKey.toBase64());
+        if (endpoint.isPresent())
+            sb.append(" @").append(endpoint.get());
+        sb.append(')');
         return sb.toString();
     }
 
-    public static class Observable extends BaseObservable implements Parcelable {
-        public static final Creator<Observable> CREATOR = new Creator<Observable>() {
-            @Override
-            public Observable createFromParcel(final Parcel in) {
-                return new Observable(in);
-            }
+    /**
+     * Converts the {@code Peer} into a string suitable for inclusion in a {@code wg-quick}
+     * configuration file.
+     *
+     * @return The {@code Peer} represented as a series of "KEY = VALUE" lines
+     */
+    public String toWgQuickString() {
+        final StringBuilder sb = new StringBuilder();
+        if (!allowedIps.isEmpty())
+            sb.append("AllowedIPs = ").append(TextUtils.join(", ", allowedIps)).append('\n');
+        if (endpoint.isPresent())
+            sb.append("Endpoint = ").append(endpoint.get()).append('\n');
+        if (persistentKeepalive.isPresent())
+            sb.append("PersistentKeepalive = ").append(persistentKeepalive.get()).append('\n');
+        if (preSharedKey.isPresent())
+            sb.append("PreSharedKey = ").append(preSharedKey.get().toBase64()).append('\n');
+        sb.append("PublicKey = ").append(publicKey.toBase64()).append('\n');
+        return sb.toString();
+    }
 
-            @Override
-            public Observable[] newArray(final int size) {
-                return new Observable[size];
-            }
-        };
-        private static final List<String> DEFAULT_ROUTE_MOD_RFC1918_V4 = Arrays.asList("0.0.0.0/5", "8.0.0.0/7", "11.0.0.0/8", "12.0.0.0/6", "16.0.0.0/4", "32.0.0.0/3", "64.0.0.0/2", "128.0.0.0/3", "160.0.0.0/5", "168.0.0.0/6", "172.0.0.0/12", "172.32.0.0/11", "172.64.0.0/10", "172.128.0.0/9", "173.0.0.0/8", "174.0.0.0/7", "176.0.0.0/4", "192.0.0.0/9", "192.128.0.0/11", "192.160.0.0/13", "192.169.0.0/16", "192.170.0.0/15", "192.172.0.0/14", "192.176.0.0/12", "192.192.0.0/10", "193.0.0.0/8", "194.0.0.0/7", "196.0.0.0/6", "200.0.0.0/5", "208.0.0.0/4");
-        private static final String DEFAULT_ROUTE_V4 = "0.0.0.0/0";
-        private final List<String> interfaceDNSRoutes = new ArrayList<>();
-        @Nullable private String allowedIPs;
-        @Nullable private String endpoint;
-        private int numSiblings;
-        @Nullable private String persistentKeepalive;
-        @Nullable private String preSharedKey;
-        @Nullable private String publicKey;
+    @SuppressWarnings("UnusedReturnValue")
+    public static final class Builder {
+        // Defaults to an empty set.
+        private final Set<InetNetwork> allowedIps = new ArraySet<>();
+        // Defaults to not present.
+        private Optional<InetSocketAddress> endpoint = Optional.empty();
+        // Defaults to not present.
+        private Optional<Integer> persistentKeepalive = Optional.empty();
+        // Defaults to not present.
+        private Optional<Key> preSharedKey = Optional.empty();
+        // No default; must be provided before building.
+        @Nullable
+        private Key publicKey;
 
-        public Observable(final Peer parent) {
-            loadData(parent);
+        public Builder addAllowedIp(final InetNetwork allowedIp) {
+            // TODO(smaeul): Check for overlap (same address, different mask).
+            allowedIps.add(allowedIp);
+            return this;
         }
 
-        private Observable(final Parcel in) {
-            allowedIPs = in.readString();
-            endpoint = in.readString();
-            persistentKeepalive = in.readString();
-            preSharedKey = in.readString();
-            publicKey = in.readString();
-            numSiblings = in.readInt();
-            in.readStringList(interfaceDNSRoutes);
+        public Builder addAllowedIps(final Collection<? extends InetNetwork> allowedIps) {
+            // TODO(smaeul): Check for overlap (same address, different mask).
+            this.allowedIps.addAll(allowedIps);
+            return this;
         }
 
-        public static Observable newInstance() {
-            return new Observable(new Peer());
+        public Peer build() {
+            return new Peer(this);
         }
 
-        public void commitData(final Peer parent) {
-            parent.setAllowedIPsString(allowedIPs);
-            parent.setEndpointString(endpoint);
-            parent.setPersistentKeepaliveString(persistentKeepalive);
-            parent.setPreSharedKey(preSharedKey);
-            parent.setPublicKey(publicKey);
-            if (parent.getPublicKey() == null)
-                throw new IllegalArgumentException("Peer public key may not be empty");
-            loadData(parent);
-            notifyChange();
+        public Builder parseAllowedIPs(final CharSequence allowedIps) {
+            final List<InetNetwork> newAllowedIps = Stream.of(Config.LIST_SEPARATOR.split(allowedIps))
+                    .map(InetNetwork::new)
+                    .collect(Collectors.toUnmodifiableList());
+            return addAllowedIps(newAllowedIps);
         }
 
-        @Override
-        public int describeContents() {
-            return 0;
+        public Builder parseEndpoint(final String endpoint) {
+            final int colon = endpoint.lastIndexOf(':');
+            final String address = endpoint.substring(0, colon);
+            final String port = endpoint.substring(colon + 1);
+            final InetSocketAddress newEndpoint =
+                    new InetSocketAddress(InetAddresses.parse(address), Integer.parseInt(port));
+            return setEndpoint(newEndpoint);
         }
 
-        @Bindable @Nullable
-        public String getAllowedIPs() {
-            return allowedIPs;
+        public Builder parsePersistentKeepalive(final String persistentKeepalive) {
+            return setPersistentKeepalive(Integer.parseInt(persistentKeepalive));
         }
 
-        @Bindable
-        public boolean getCanToggleExcludePrivateIPs() {
-            final Collection<String> ips = Arrays.asList(Attribute.stringToList(allowedIPs));
-            return numSiblings == 0 && (ips.contains(DEFAULT_ROUTE_V4) || ips.containsAll(DEFAULT_ROUTE_MOD_RFC1918_V4));
+        public Builder parsePreSharedKey(final String preSharedKey) {
+            return setPreSharedKey(Key.fromBase64(preSharedKey));
         }
 
-        @Bindable @Nullable
-        public String getEndpoint() {
-            return endpoint;
+        public Builder parsePublicKey(final String publicKey) {
+            return setPublicKey(Key.fromBase64(publicKey));
         }
 
-        @Bindable
-        public boolean getIsExcludePrivateIPsOn() {
-            return numSiblings == 0 && Arrays.asList(Attribute.stringToList(allowedIPs)).containsAll(DEFAULT_ROUTE_MOD_RFC1918_V4);
+        public Builder setEndpoint(final InetSocketAddress endpoint) {
+            this.endpoint = Optional.of(endpoint);
+            return this;
         }
 
-        @Bindable @Nullable
-        public String getPersistentKeepalive() {
-            return persistentKeepalive;
+        public Builder setPersistentKeepalive(final int persistentKeepalive) {
+            if (persistentKeepalive < 1)
+                throw new IllegalArgumentException("PersistentKeepalive must be positive");
+            this.persistentKeepalive = Optional.of(persistentKeepalive);
+            return this;
         }
 
-        @Bindable @Nullable
-        public String getPreSharedKey() {
-            return preSharedKey;
+        public Builder setPreSharedKey(final Key preSharedKey) {
+            this.preSharedKey = Optional.of(preSharedKey);
+            return this;
         }
 
-        @Bindable @Nullable
-        public String getPublicKey() {
-            return publicKey;
-        }
-
-        private void loadData(final Peer parent) {
-            allowedIPs = parent.getAllowedIPsString();
-            endpoint = parent.getEndpointString();
-            persistentKeepalive = parent.getPersistentKeepaliveString();
-            preSharedKey = parent.getPreSharedKey();
-            publicKey = parent.getPublicKey();
-        }
-
-        public void setAllowedIPs(final String allowedIPs) {
-            this.allowedIPs = allowedIPs;
-            notifyPropertyChanged(BR.allowedIPs);
-            notifyPropertyChanged(BR.canToggleExcludePrivateIPs);
-            notifyPropertyChanged(BR.isExcludePrivateIPsOn);
-        }
-
-        public void setEndpoint(final String endpoint) {
-            this.endpoint = endpoint;
-            notifyPropertyChanged(BR.endpoint);
-        }
-
-        public void setInterfaceDNSRoutes(@Nullable final String dnsServers) {
-            final Collection<String> ips = new HashSet<>(Arrays.asList(Attribute.stringToList(allowedIPs)));
-            final boolean modifyAllowedIPs = ips.containsAll(DEFAULT_ROUTE_MOD_RFC1918_V4);
-
-            ips.removeAll(interfaceDNSRoutes);
-            interfaceDNSRoutes.clear();
-            for (final String dnsServer : Attribute.stringToList(dnsServers)) {
-                if (!dnsServer.contains(":"))
-                    interfaceDNSRoutes.add(dnsServer + "/32");
-            }
-            ips.addAll(interfaceDNSRoutes);
-            if (modifyAllowedIPs)
-                setAllowedIPs(Attribute.iterableToString(ips));
-        }
-
-        public void setNumSiblings(final int num) {
-            numSiblings = num;
-            notifyPropertyChanged(BR.canToggleExcludePrivateIPs);
-            notifyPropertyChanged(BR.isExcludePrivateIPsOn);
-        }
-
-        public void setPersistentKeepalive(final String persistentKeepalive) {
-            this.persistentKeepalive = persistentKeepalive;
-            notifyPropertyChanged(BR.persistentKeepalive);
-        }
-
-        public void setPreSharedKey(final String preSharedKey) {
-            this.preSharedKey = preSharedKey;
-            notifyPropertyChanged(BR.preSharedKey);
-        }
-
-        public void setPublicKey(final String publicKey) {
+        public Builder setPublicKey(final Key publicKey) {
             this.publicKey = publicKey;
-            notifyPropertyChanged(BR.publicKey);
-        }
-
-        public void toggleExcludePrivateIPs() {
-            final Collection<String> ips = new HashSet<>(Arrays.asList(Attribute.stringToList(allowedIPs)));
-            final boolean hasDefaultRoute = ips.contains(DEFAULT_ROUTE_V4);
-            final boolean hasDefaultRouteModRFC1918 = ips.containsAll(DEFAULT_ROUTE_MOD_RFC1918_V4);
-            if ((!hasDefaultRoute && !hasDefaultRouteModRFC1918) || numSiblings > 0)
-                return;
-            Iterables.removeIf(ips, ip -> !ip.contains(":"));
-            if (hasDefaultRoute) {
-                ips.addAll(DEFAULT_ROUTE_MOD_RFC1918_V4);
-                ips.addAll(interfaceDNSRoutes);
-            } else if (hasDefaultRouteModRFC1918)
-                ips.add(DEFAULT_ROUTE_V4);
-            setAllowedIPs(Attribute.iterableToString(ips));
-        }
-
-        @Override
-        public void writeToParcel(final Parcel dest, final int flags) {
-            dest.writeString(allowedIPs);
-            dest.writeString(endpoint);
-            dest.writeString(persistentKeepalive);
-            dest.writeString(preSharedKey);
-            dest.writeString(publicKey);
-            dest.writeInt(numSiblings);
-            dest.writeStringList(interfaceDNSRoutes);
+            return this;
         }
     }
 }

@@ -6,161 +6,154 @@
 
 package com.wireguard.config;
 
-import android.databinding.BaseObservable;
-import android.databinding.Bindable;
-import android.databinding.ObservableArrayList;
-import android.databinding.ObservableList;
-import android.os.Parcel;
-import android.os.Parcelable;
 import android.support.annotation.Nullable;
-
-import com.android.databinding.library.baseAdapters.BR;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
- * Represents a wg-quick configuration file, its name, and its connection state.
+ * Represents the contents of a wg-quick configuration file, made up of one or more "Interface"
+ * sections (combined together), and zero or more "Peer" sections (treated individually).
+ * <p>
+ * Instances of this class are immutable.
  */
 
-public class Config {
-    private final Interface interfaceSection = new Interface();
-    private List<Peer> peers = new ArrayList<>();
+public final class Config {
+    static final Pattern LINE_PARSER = Pattern.compile("(\\w+)\\s*=\\s*([^\\s#][^#]*)");
+    static final Pattern LIST_SEPARATOR = Pattern.compile("\\s*,\\s*");
 
-    public static Config from(final InputStream stream) throws IOException {
-        return from(new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8)));
+    private final Interface interfaze;
+    private final List<Peer> peers;
+
+    private Config(final Builder builder) {
+        interfaze = Objects.requireNonNull(builder.interfaze, "An [Interface] section is required");
+        // Defensively copy to ensure immutability even if the Builder is reused.
+        peers = Collections.unmodifiableList(new ArrayList<>(builder.peers));
     }
 
-    public static Config from(final BufferedReader reader) throws IOException {
-        final Config config = new Config();
-        Peer currentPeer = null;
-        String line;
-        boolean inInterfaceSection = false;
-        while ((line = reader.readLine()) != null) {
-            final int commentIndex = line.indexOf('#');
-            if (commentIndex != -1)
-                line = line.substring(0, commentIndex);
-            line = line.trim();
-            if (line.isEmpty())
-                continue;
-            if ("[Interface]".toLowerCase().equals(line.toLowerCase())) {
-                currentPeer = null;
-                inInterfaceSection = true;
-            } else if ("[Peer]".toLowerCase().equals(line.toLowerCase())) {
-                currentPeer = new Peer();
-                config.peers.add(currentPeer);
-                inInterfaceSection = false;
-            } else if (inInterfaceSection) {
-                config.interfaceSection.parse(line);
-            } else if (currentPeer != null) {
-                currentPeer.parse(line);
-            } else {
-                throw new IllegalArgumentException("Invalid configuration line: " + line);
+    public static Config parse(final InputStream stream) throws IOException {
+        final Builder builder = new Builder();
+        try (final BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
+            final Collection<String> interfaceLines = new ArrayList<>();
+            final Collection<String> peerLines = new ArrayList<>();
+            boolean inInterfaceSection = false;
+            boolean inPeerSection = false;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                final int commentIndex = line.indexOf('#');
+                if (commentIndex != -1)
+                    line = line.substring(0, commentIndex);
+                line = line.trim();
+                if (line.isEmpty())
+                    continue;
+                if ("[Interface]".equalsIgnoreCase(line)) {
+                    // Consume all [Peer] lines read so far.
+                    if (inPeerSection) {
+                        builder.parsePeer(peerLines);
+                        peerLines.clear();
+                    }
+                    inInterfaceSection = true;
+                    inPeerSection = false;
+                } else if ("[Peer]".equalsIgnoreCase(line)) {
+                    // Consume all [Peer] lines read so far.
+                    if (inPeerSection) {
+                        builder.parsePeer(peerLines);
+                        peerLines.clear();
+                    }
+                    inInterfaceSection = false;
+                    inPeerSection = true;
+                } else if (inInterfaceSection) {
+                    interfaceLines.add(line);
+                } else if (inPeerSection) {
+                    peerLines.add(line);
+                } else {
+                    throw new IllegalArgumentException("Unexpected configuration line: " + line);
+                }
             }
+            if (!inInterfaceSection && !inPeerSection)
+                throw new IllegalArgumentException("Empty configuration");
+            // Combine all [Interface] sections in the file.
+            builder.parseInterface(interfaceLines);
         }
-        if (!inInterfaceSection && currentPeer == null) {
-            throw new IllegalArgumentException("Could not find any config information");
-        }
-        return config;
+        return builder.build();
     }
 
     public Interface getInterface() {
-        return interfaceSection;
+        return interfaze;
     }
 
     public List<Peer> getPeers() {
         return peers;
     }
 
+    /**
+     * Converts the {@code Config} into a string suitable for debugging purposes. The {@code Config}
+     * is identified by its interface's public key and the number of peers it has.
+     *
+     * @return A concise single-line identifier for the {@code Config}
+     */
     @Override
     public String toString() {
-        final StringBuilder sb = new StringBuilder().append(interfaceSection);
+        return "(Config " + interfaze + " (" + peers.size() + " peers))";
+    }
+
+    /**
+     * Converts the {@code Config} into a string suitable for use as a {@code wg-quick}
+     * configuration file.
+     *
+     * @return The {@code Config} represented as one [Interface] and zero or more [Peer] sections
+     */
+    public String toWgQuickString() {
+        final StringBuilder sb = new StringBuilder();
+        sb.append("[Interface]\n").append(interfaze);
         for (final Peer peer : peers)
-            sb.append('\n').append(peer);
+            sb.append("\n[Peer]\n").append(peer);
         return sb.toString();
     }
 
-    public static class Observable extends BaseObservable implements Parcelable {
-        public static final Creator<Observable> CREATOR = new Creator<Observable>() {
-            @Override
-            public Observable createFromParcel(final Parcel in) {
-                return new Observable(in);
-            }
+    @SuppressWarnings("UnusedReturnValue")
+    public static final class Builder {
+        // Defaults to an empty list.
+        private final List<Peer> peers = new ArrayList<>();
+        // No default; must be provided before building.
+        @Nullable
+        private Interface interfaze;
 
-            @Override
-            public Observable[] newArray(final int size) {
-                return new Observable[size];
-            }
-        };
-        private final Interface.Observable observableInterface;
-        private final ObservableList<Peer.Observable> observablePeers;
-        @Nullable private String name;
-
-        public Observable(@Nullable final Config parent, @Nullable final String name) {
-            this.name = name;
-
-            observableInterface = new Interface.Observable(parent == null ? null : parent.interfaceSection);
-            observablePeers = new ObservableArrayList<>();
-            if (parent != null) {
-                for (final Peer peer : parent.getPeers())
-                    observablePeers.add(new Peer.Observable(peer));
-            }
+        public Builder addPeer(final Peer peer) {
+            // TODO(smaeul): Should this be a Set to prevent duplicates? */
+            peers.add(peer);
+            return this;
         }
 
-        private Observable(final Parcel in) {
-            name = in.readString();
-            observableInterface = in.readParcelable(Interface.Observable.class.getClassLoader());
-            observablePeers = new ObservableArrayList<>();
-            in.readTypedList(observablePeers, Peer.Observable.CREATOR);
+        public Builder addPeers(final Collection<Peer> peers) {
+            // TODO(smaeul): Should this be a Set to prevent duplicates? */
+            this.peers.addAll(peers);
+            return this;
         }
 
-        public void commitData(final Config parent) {
-            observableInterface.commitData(parent.interfaceSection);
-            final List<Peer> newPeers = new ArrayList<>(observablePeers.size());
-            for (final Peer.Observable observablePeer : observablePeers) {
-                final Peer peer = new Peer();
-                observablePeer.commitData(peer);
-                newPeers.add(peer);
-            }
-            parent.peers = newPeers;
-            notifyChange();
+        public Config build() {
+            return new Config(this);
         }
 
-        @Override
-        public int describeContents() {
-            return 0;
+        public Builder parseInterface(final Iterable<? extends CharSequence> lines) {
+            return setInterface(Interface.parse(lines));
         }
 
-        @Bindable
-        public Interface.Observable getInterfaceSection() {
-            return observableInterface;
+        public Builder parsePeer(final Iterable<? extends CharSequence> lines) {
+            return addPeer(Peer.parse(lines));
         }
 
-        @Bindable
-        public String getName() {
-            return name == null ? "" : name;
-        }
-
-        @Bindable
-        public ObservableList<Peer.Observable> getPeers() {
-            return observablePeers;
-        }
-
-        public void setName(final String name) {
-            this.name = name;
-            notifyPropertyChanged(BR.name);
-        }
-
-        @Override
-        public void writeToParcel(final Parcel dest, final int flags) {
-            dest.writeString(name);
-            dest.writeParcelable(observableInterface, flags);
-            dest.writeTypedList(observablePeers);
+        public Builder setInterface(final Interface interfaze) {
+            this.interfaze = interfaze;
+            return this;
         }
     }
 }
